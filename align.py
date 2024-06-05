@@ -89,7 +89,7 @@ def parse_and_shift_bam(bam_file, output_file):
         BarColumn(),
         "{task.completed}/{task.total}",
     ) as progress:
-        task = progress.add_task("Processing reads...", total=total_reads)
+        task = progress.add_task("Processing reads...", total=total_reads / 2)
 
         for read in bam.fetch():
             if (
