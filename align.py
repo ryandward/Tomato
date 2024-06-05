@@ -28,35 +28,43 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
         "-2",
         rev_read,
     ]
+    samtools_view_command = ["samtools", "view", "-Sb", "-"]
     with subprocess.Popen(
         bowtie2_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     ) as bowtie2_process:
-        with open(output_bam, "wb") as bam_file:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn(
-                    "[progress.description]{task.description}",
-                    highlighter=ReprHighlighter(),
-                ),
-                TextColumn(
-                    "BAM file size: {task.fields[output_size]:,.2f} MB",
-                    highlighter=ReprHighlighter(),
-                ),
-                BarColumn(),
-            ) as progress:
-                task = progress.add_task(
-                    "Aligning reads...",
-                    total=None,
-                    output_size=0.0,
-                )
-                while bowtie2_process.poll() is None:
-                    bam_file.write(bowtie2_process.stdout.read(1024))
-                    output_size = os.path.getsize(output_bam) / (
-                        1024 * 1024
-                    )  # Convert bytes to MB
-                    progress.update(task, output_size=output_size)
-                bam_file.write(bowtie2_process.stdout.read())
-            bowtie2_process.wait()
+        with subprocess.Popen(
+            samtools_view_command,
+            stdin=bowtie2_process.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ) as samtools_view_process:
+            with open(output_bam, "wb") as bam_file:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn(
+                        "[progress.description]{task.description}",
+                        highlighter=ReprHighlighter(),
+                    ),
+                    TextColumn(
+                        "BAM file size: {task.fields[output_size]:,.2f} MB",
+                        highlighter=ReprHighlighter(),
+                    ),
+                    BarColumn(),
+                ) as progress:
+                    task = progress.add_task(
+                        "Aligning reads...",
+                        total=None,
+                        output_size=0.0,
+                    )
+                    while bowtie2_process.poll() is None:
+                        bam_file.write(samtools_view_process.stdout.read(1024))
+                        output_size = os.path.getsize(output_bam) / (
+                            1024 * 1024
+                        )  # Convert bytes to MB
+                        progress.update(task, output_size=output_size)
+                    bam_file.write(samtools_view_process.stdout.read())
+                samtools_view_process.wait()
+        bowtie2_process.wait()
     console.log("Bowtie2 alignment completed.")
 
 
