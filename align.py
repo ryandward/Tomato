@@ -4,13 +4,13 @@ import pysam
 import subprocess
 from collections import defaultdict
 from rich.console import Console
+from rich.highlighter import ReprHighlighter
 from rich.progress import (
     Progress,
     SpinnerColumn,
     TextColumn,
     BarColumn,
 )
-from rich.highlighter import ReprHighlighter
 
 console = Console()
 
@@ -45,11 +45,11 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
                         "[progress.description]{task.description}",
                         highlighter=ReprHighlighter(),
                     ),
+                    BarColumn(),
                     TextColumn(
                         "BAM file size: {task.fields[output_size]:,.2f} MB",
                         highlighter=ReprHighlighter(),
                     ),
-                    BarColumn(),
                 ) as progress:
                     task = progress.add_task(
                         "Aligning reads...",
@@ -87,9 +87,11 @@ def parse_and_shift_bam(bam_file, output_file):
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        "{task.completed}/{task.total}",
+        TextColumn(
+            "{task.completed}/{task.total} pairs", highlighter=ReprHighlighter()
+        ),
     ) as progress:
-        task = progress.add_task("Processing reads...", total=total_reads / 2)
+        task = progress.add_task("Processing reads...", total=round(total_reads / 2))
 
         for read in bam.fetch():
             if (
@@ -115,11 +117,11 @@ def parse_and_shift_bam(bam_file, output_file):
 
                 read_pairs_processed += 1
                 progress.update(task, advance=1)
-                if read_pairs_processed % 1000 == 0:
-                    console.print(
-                        f"{read_pairs_processed:,} read pairs have been processed.",
-                        end="\r",
-                    )
+                # if read_pairs_processed % 1000 == 0:
+                #     console.print(
+                #         f"{read_pairs_processed:,} read pairs have been processed.",
+                #         end="\r",
+                #     )
 
     with open(output_file, "w") as f:
         for (chrom, coord), count in coordinates_count.items():
