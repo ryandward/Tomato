@@ -10,12 +10,15 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     BarColumn,
+    TimeElapsedColumn
 )
+from multiprocessing import Process
+import time
 
 console = Console()
 
-
 def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
+    count = 0
     console.log("Starting bowtie2.")
     bowtie2_command = [
         "bowtie2",
@@ -28,17 +31,11 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
         "-2",
         rev_read,
     ]
-    samtools_view_command = ["samtools", "view", "-Sb", "-"]
     with subprocess.Popen(
         bowtie2_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     ) as bowtie2_process:
-        with subprocess.Popen(
-            samtools_view_command,
-            stdin=bowtie2_process.stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        ) as samtools_view_process:
-            with open(output_bam, "wb") as bam_file:
+        with pysam.AlignmentFile(bowtie2_process.stdout, "rb", check_sq=False) as samfile:
+            with pysam.AlignmentFile(output_bam, "wb", header=samfile.header) as bamfile:
                 with Progress(
                     SpinnerColumn(),
                     TextColumn(
@@ -47,51 +44,78 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
                     ),
                     BarColumn(),
                     TextColumn(
-                        "BAM file size: {task.fields[output_size]:,.2f} MB",
+                        "Reads: {task.fields[count]:,.0f}.",
+                        highlighter=ReprHighlighter(),
+                    ),
+                    TextColumn(
+                        "BAM size: {task.fields[output_size]:,.2f} MB.",
                         highlighter=ReprHighlighter(),
                     ),
                 ) as progress:
                     task = progress.add_task(
-                        "Aligning reads...",
+                        "Aligning reads...  ",
                         total=None,
                         output_size=0.0,
+                        count=0,
                     )
-                    while bowtie2_process.poll() is None:
-                        bam_file.write(samtools_view_process.stdout.read(1024))
-                        output_size = os.path.getsize(output_bam) / (
-                            1024 * 1024
-                        )  # Convert bytes to MB
-                        progress.update(task, output_size=output_size)
-                    bam_file.write(samtools_view_process.stdout.read())
-                samtools_view_process.wait()
-        bowtie2_process.wait()
+                    for read in samfile:
+                        if (
+                            read.is_proper_pair
+                            and not read.is_unmapped
+                            and not read.mate_is_unmapped
+                        ):
+                            bamfile.write(read)
+                            output_size = os.path.getsize(output_bam) / (
+                                1024 * 1024
+                            )  # Convert bytes to MB
+                            count = count + 1
+                            progress.update(task, output_size=output_size)
+                            progress.update(task, count=count)
+                            
     console.log("Bowtie2 alignment completed.")
 
+def sort_bam_process(bam_file, sorted_bam):
+    pysam.sort("-o", sorted_bam, bam_file)
+    pysam.index(sorted_bam)
 
 def sort_bam(bam_file):
     console.log("Sorting BAM file.")
     sorted_bam = bam_file.replace(".bam", ".sorted.bam")
-    subprocess.run(["samtools", "sort", "-o", sorted_bam, bam_file])
-    subprocess.run(["samtools", "index", sorted_bam])
+
+    process = Process(target=sort_bam_process, args=(bam_file, sorted_bam))
+    process.start()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}", highlighter=ReprHighlighter()),
+        BarColumn(),
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task("Sorting BAM file...", total=None)
+        while process.is_alive():
+            progress.refresh()  # Ensure the progress display is updated
+
+    process.join()
+    console.log("Sorting completed.")
     return sorted_bam
 
-
-def parse_and_shift_bam(bam_file, output_file):
+def parse_bam(bam_file, output_file):
     console.log("Parsing and shifting reads in BAM file.")
     bam = pysam.AlignmentFile(bam_file, "rb")
     coordinates_count = defaultdict(int)
     read_pairs_processed = 0
 
     total_reads = bam.mapped
+    forward_reads = total_reads / 2
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[progress.description]{task.description}", highlighter=ReprHighlighter()),
         BarColumn(),
         TextColumn(
-            "{task.completed}/{task.total} pairs", highlighter=ReprHighlighter()
+            "{task.completed:,}/{task.total:,} pairs.", highlighter=ReprHighlighter()
         ),
     ) as progress:
-        task = progress.add_task("Processing reads...", total=round(total_reads / 2))
+        task = progress.add_task("Processing reads...", total=round(forward_reads))
 
         for read in bam.fetch():
             if (
@@ -101,32 +125,18 @@ def parse_and_shift_bam(bam_file, output_file):
                 and read.is_read1
             ):
                 chrom = read.reference_name
-                start = (
-                    read.reference_start + 4
-                    if not read.is_reverse
-                    else read.reference_start - 5
-                )
-                end = (
-                    read.next_reference_start + read.template_length - 5
-                    if not read.mate_is_reverse
-                    else read.next_reference_start + read.template_length + 4
-                )
+                start = read.reference_start
+                end = read.next_reference_start + read.template_length
 
                 for pos in range(start, end):
                     coordinates_count[(chrom, pos)] += 1
 
                 read_pairs_processed += 1
                 progress.update(task, advance=1)
-                # if read_pairs_processed % 1000 == 0:
-                #     console.print(
-                #         f"{read_pairs_processed:,} read pairs have been processed.",
-                #         end="\r",
-                #     )
 
     with open(output_file, "w") as f:
         for (chrom, coord), count in coordinates_count.items():
             f.write(f"{chrom}\t{coord}\t{count}\n")
-
 
 def process_directory(directory, bowtie2_index):
     console.log("Processing directory...")
@@ -143,11 +153,10 @@ def process_directory(directory, bowtie2_index):
 
         sorted_bam = sort_bam(output_bam)
 
-        output_coords = os.path.join(directory, f"{exp}_shifted_coords.tsv")
-        parse_and_shift_bam(sorted_bam, output_coords)
+        output_coords = os.path.join(directory, f"{exp}_coords.tsv")
+        parse_bam(sorted_bam, output_coords)
 
         console.print(f"Finished processing experiment: {exp}")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -163,7 +172,6 @@ def main():
     args = parser.parse_args()
 
     process_directory(args.directory, args.bowtie2_index)
-
 
 if __name__ == "__main__":
     main()
