@@ -7,22 +7,22 @@ from rich.console import Console
 from rich.highlighter import ReprHighlighter
 from rich.progress import (
     Progress,
-    SpinnerColumn,
     TextColumn,
     BarColumn,
-    TimeElapsedColumn
+    TimeElapsedColumn,
+    TransferSpeedColumn,
 )
 from multiprocessing import Process
 import time
 
 console = Console()
 
+
 def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
     count = 0
-    console.log("Starting bowtie2.")
     bowtie2_command = [
         "bowtie2",
-        "-p10",
+        "-p6",
         "--very-fast",
         "-x",
         bowtie2_index,
@@ -34,26 +34,30 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
     with subprocess.Popen(
         bowtie2_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     ) as bowtie2_process:
-        with pysam.AlignmentFile(bowtie2_process.stdout, "rb", check_sq=False) as samfile:
-            with pysam.AlignmentFile(output_bam, "wb", header=samfile.header) as bamfile:
+        with pysam.AlignmentFile(
+            bowtie2_process.stdout, "rb", check_sq=False
+        ) as samfile:
+            with pysam.AlignmentFile(
+                output_bam, "wb", header=samfile.header
+            ) as bamfile:
                 with Progress(
-                    SpinnerColumn(),
                     TextColumn(
                         "[progress.description]{task.description}",
                         highlighter=ReprHighlighter(),
                     ),
                     BarColumn(),
                     TextColumn(
-                        "Reads: {task.fields[count]:,.0f}.",
+                        "Reads: {task.fields[count]:,.0f}",
                         highlighter=ReprHighlighter(),
                     ),
                     TextColumn(
-                        "BAM size: {task.fields[output_size]:,.2f} MB.",
+                        "(BAM size: {task.fields[output_size]:,.2f} MB)",
                         highlighter=ReprHighlighter(),
                     ),
+                    TransferSpeedColumn(),
                 ) as progress:
                     task = progress.add_task(
-                        "Aligning reads...  ",
+                        "Bowtie2...",
                         total=None,
                         output_size=0.0,
                         count=0,
@@ -71,51 +75,53 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
                             count = count + 1
                             progress.update(task, output_size=output_size)
                             progress.update(task, count=count)
-                            
-    console.log("Bowtie2 alignment completed.")
+                            progress.update(task, completed=os.path.getsize(output_bam))
+                    progress.update(task, total=count)
+
 
 def sort_bam_process(bam_file, sorted_bam):
     pysam.sort("-o", sorted_bam, bam_file)
     pysam.index(sorted_bam)
 
+
 def sort_bam(bam_file):
-    console.log("Sorting BAM file.")
     sorted_bam = bam_file.replace(".bam", ".sorted.bam")
 
     process = Process(target=sort_bam_process, args=(bam_file, sorted_bam))
     process.start()
 
     with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}", highlighter=ReprHighlighter()),
+        TextColumn(
+            "[progress.description]{task.description}", highlighter=ReprHighlighter()
+        ),
         BarColumn(),
+        TextColumn("Time elapsed:"),
         TimeElapsedColumn(),
     ) as progress:
-        task = progress.add_task("Sorting BAM file...", total=None)
+        task = progress.add_task("Sorting...", total=None)
         while process.is_alive():
             progress.refresh()  # Ensure the progress display is updated
+        progress.update(task, total=1, advance=1)
 
     process.join()
-    console.log("Sorting completed.")
     return sorted_bam
 
+
 def parse_bam(bam_file, output_file):
-    console.log("Parsing and shifting reads in BAM file.")
     bam = pysam.AlignmentFile(bam_file, "rb")
     coordinates_count = defaultdict(int)
     read_pairs_processed = 0
 
     total_reads = bam.mapped
-    forward_reads = total_reads / 2
+    forward_reads = total_reads
     with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}", highlighter=ReprHighlighter()),
-        BarColumn(),
         TextColumn(
-            "{task.completed:,}/{task.total:,} pairs.", highlighter=ReprHighlighter()
+            "[progress.description]{task.description}", highlighter=ReprHighlighter()
         ),
+        BarColumn(),
+        TextColumn("Reads: {task.completed:,}", highlighter=ReprHighlighter()),
     ) as progress:
-        task = progress.add_task("Processing reads...", total=round(forward_reads))
+        task = progress.add_task("Parsing...", total=round(forward_reads))
 
         for read in bam.fetch():
             if (
@@ -132,19 +138,20 @@ def parse_bam(bam_file, output_file):
                     coordinates_count[(chrom, pos)] += 1
 
                 read_pairs_processed += 1
-                progress.update(task, advance=1)
+                progress.update(task, advance=2)
 
     with open(output_file, "w") as f:
         for (chrom, coord), count in coordinates_count.items():
             f.write(f"{chrom}\t{coord}\t{count}\n")
 
+
 def process_directory(directory, bowtie2_index):
-    console.log("Processing directory...")
+    console.print(f"Processing directory: {os.path.abspath(directory)}")
     files = [f for f in os.listdir(directory) if f.endswith("_1.fastq")]
     experiments = set(f.split("_1.fastq")[0] for f in files)
 
     for exp in experiments:
-        console.log(f"Processing experiment: {exp}")
+        console.print(f"Processing experiment: [bold cyan]{exp}[/bold cyan]")
         fwd_read = os.path.join(directory, f"{exp}_1.fastq")
         rev_read = os.path.join(directory, f"{exp}_2.fastq")
 
@@ -156,7 +163,8 @@ def process_directory(directory, bowtie2_index):
         output_coords = os.path.join(directory, f"{exp}_coords.tsv")
         parse_bam(sorted_bam, output_coords)
 
-        console.print(f"Finished processing experiment: {exp}")
+        console.print(f"Finished processing experiment: [bold cyan]{exp}[/bold cyan]")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -172,6 +180,7 @@ def main():
     args = parser.parse_args()
 
     process_directory(args.directory, args.bowtie2_index)
+
 
 if __name__ == "__main__":
     main()
