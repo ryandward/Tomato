@@ -13,7 +13,6 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from multiprocessing import Process
-import time
 
 console = Console()
 
