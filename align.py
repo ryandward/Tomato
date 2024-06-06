@@ -79,15 +79,16 @@ def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
                     progress.update(task, total=count)
 
 
-def sort_bam_process(bam_file, sorted_bam):
-    pysam.sort("-o", sorted_bam, bam_file)
+def sort_bam_process(bam_file, sorted_bam, threads=4):
+    # Include the --threads option to utilize multiple cores for sorting
+    pysam.sort("-o", sorted_bam, "-@", str(threads), bam_file)
     pysam.index(sorted_bam)
 
 
-def sort_bam(bam_file):
+def sort_bam(bam_file, threads=4):
     sorted_bam = bam_file.replace(".bam", ".sorted.bam")
 
-    process = Process(target=sort_bam_process, args=(bam_file, sorted_bam))
+    process = Process(target=sort_bam_process, args=(bam_file, sorted_bam, threads))
     process.start()
 
     with Progress(
