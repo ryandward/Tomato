@@ -16,6 +16,8 @@ from multiprocessing import Process
 
 console = Console()
 
+# look https://github.com/nf-core/atacseq?tab=readme-ov-file for the guidelines
+
 
 def run_bowtie2(fwd_read, rev_read, bowtie2_index, output_bam):
     count = 0
@@ -107,42 +109,15 @@ def sort_bam(bam_file, threads=4):
     return sorted_bam
 
 
+from pybedtools import BedTool
+
+
 def parse_bam(bam_file, output_file):
-    bam = pysam.AlignmentFile(bam_file, "rb")
-    coordinates_count = defaultdict(int)
-    read_pairs_processed = 0
+    # Create a BedTool object from the BAM file
+    bam = BedTool(bam_file)
 
-    total_reads = bam.mapped
-    forward_reads = total_reads
-    with Progress(
-        TextColumn(
-            "[progress.description]{task.description}", highlighter=ReprHighlighter()
-        ),
-        BarColumn(),
-        TextColumn("Reads: {task.completed:,}", highlighter=ReprHighlighter()),
-    ) as progress:
-        task = progress.add_task("Parsing...", total=round(forward_reads))
-
-        for read in bam.fetch():
-            if (
-                read.is_proper_pair
-                and not read.is_unmapped
-                and not read.mate_is_unmapped
-                and read.is_read1
-            ):
-                chrom = read.reference_name
-                start = read.reference_start
-                end = read.next_reference_start + read.template_length
-
-                for pos in range(start, end):
-                    coordinates_count[(chrom, pos)] += 1
-
-                read_pairs_processed += 1
-                progress.update(task, advance=2)
-
-    with open(output_file, "w") as f:
-        for (chrom, coord), count in coordinates_count.items():
-            f.write(f"{chrom}\t{coord}\t{count}\n")
+    # Calculate the coverage and save it to a BEDGraph file
+    bam.genome_coverage(bg=True, split=True, output=output_file)
 
 
 def process_directory(directory, bowtie2_index):
