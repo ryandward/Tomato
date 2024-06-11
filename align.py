@@ -159,3 +159,85 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# import os
+# import subprocess
+
+
+# def bam_to_bedgraph(bam_file, bedgraph_file, scale_factor):
+#     bedtools_command = [
+#         "bedtools",
+#         "genomecov",
+#         "-ibam",
+#         bam_file,
+#         "-bg",
+#         "-scale",
+#         str(scale_factor),
+#     ]
+#     with open(bedgraph_file, "w") as output:
+#         subprocess.run(bedtools_command, stdout=output)
+
+
+# def bedgraph_to_bigwig(bedgraph_file, chrom_sizes_file, bigwig_file):
+#     bedGraphToBigWig_command = [
+#         "bedGraphToBigWig",
+#         bedgraph_file,
+#         chrom_sizes_file,
+#         bigwig_file,
+#     ]
+#     subprocess.run(bedGraphToBigWig_command)
+
+
+# def compute_matrix(bigwig_file, genes_bed, output_matrix):
+#     compute_matrix_command = [
+#         "computeMatrix",
+#         "scale-regions",
+#         "-S",
+#         bigwig_file,
+#         "-R",
+#         genes_bed,
+#         "-o",
+#         output_matrix,
+#         "--regionBodyLength",
+#         "5000",
+#         "--beforeRegionStartLength",
+#         "3000",
+#         "--afterRegionStartLength",
+#         "3000",
+#     ]
+#     subprocess.run(compute_matrix_command)
+
+
+# def plot_profile(matrix_file, output_plot):
+#     plot_profile_command = ["plotProfile", "-m", matrix_file, "-o", output_plot]
+#     subprocess.run(plot_profile_command)
+
+
+# def main():
+#     bam_file = "test.bam"
+#     chrom_sizes_file = "hg19.chrom.sizes"
+#     genes_bed = "genes.bed"  # Provide your genes BED file
+#     scale_factor = 1_000_000 / int(
+#         subprocess.check_output(
+#             ["samtools", "view", "-c", "-F", "260", bam_file]
+#         ).strip()
+#     )
+
+#     bedgraph_file = bam_file.replace(".bam", ".scaled.bedgraph")
+#     bigwig_file = bam_file.replace(".bam", ".scaled.bigwig")
+
+#     bam_to_bedgraph(bam_file, bedgraph_file, scale_factor)
+#     bedgraph_to_bigwig(bedgraph_file, chrom_sizes_file, bigwig_file)
+
+#     matrix_file = "matrix.gz"
+#     output_plot = "gene_body_profile.png"
+
+#     compute_matrix(bigwig_file, genes_bed, matrix_file)
+#     plot_profile(matrix_file, output_plot)
+
+#     print(f"Generated gene body profile plot: {output_plot}")
+
+
+# if __name__ == "__main__":
+#     main()
